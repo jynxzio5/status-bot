@@ -97,58 +97,84 @@ async def update_member_count(guild, channel=None):
 @app_commands.checks.has_permissions(administrator=True)
 async def setup(interaction: discord.Interaction):
     try:
+        # التحقق من وجود السيرفر
         guild = interaction.guild
         if not guild:
             await interaction.response.send_message("This command can only be used in a server!")
+            return
+
+        # التحقق من صلاحيات البوت
+        if not guild.me.guild_permissions.manage_channels:
+            await interaction.response.send_message("I need 'Manage Channels' permission to create/edit channels!")
             return
 
         # البحث عن قناة موجودة باستخدام المعرف المخزن
         existing_channel = None
         channel_id = config['COUNTER_CHANNELS'].get(str(guild.id))
         if channel_id:
-            existing_channel = guild.get_channel(int(channel_id))
+            try:
+                existing_channel = guild.get_channel(int(channel_id))
+            except:
+                # إذا كان هناك خطأ في تحويل المعرف، نحذفه
+                config['COUNTER_CHANNELS'].pop(str(guild.id), None)
+                save_config()
 
         if existing_channel:
-            # تحديث القناة الموجودة
-            await update_member_count(guild, existing_channel)
-            await interaction.response.send_message(f"Updated existing counter channel: {existing_channel.mention}")
+            try:
+                # تحديث القناة الموجودة
+                await update_member_count(guild, existing_channel)
+                await interaction.response.send_message(f"Updated existing counter channel: {existing_channel.mention}")
+            except Exception as e:
+                await interaction.response.send_message(f"Error updating channel: {str(e)}")
             return
 
         # إنشاء أذونات القناة
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(
-                view_channel=True,  # يمكن رؤية القناة
-                connect=False,      # لا يمكن الانضمام
-                speak=False,        # لا يمكن التحدث
-                stream=False,       # لا يمكن بث الفيديو
-                send_messages=False # لا يمكن إرسال رسائل
-            ),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True,
-                manage_channels=True,
-                connect=True
-            )
-        }
+        try:
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(
+                    view_channel=True,  # يمكن رؤية القناة
+                    connect=False,      # لا يمكن الانضمام
+                    speak=False,        # لا يمكن التحدث
+                    stream=False,       # لا يمكن بث الفيديو
+                    send_messages=False # لا يمكن إرسال رسائل
+                ),
+                guild.me: discord.PermissionOverwrite(
+                    view_channel=True,
+                    manage_channels=True,
+                    connect=True
+                )
+            }
 
-        # إنشاء القناة الصوتية
-        channel = await guild.create_voice_channel(
-            name=config['CHANNEL_NAME'].format(count=guild.member_count),
-            overwrites=overwrites,
-            reason="Member counter channel"
-        )
-        
-        if channel:
-            # تخزين معرف القناة
-            config['COUNTER_CHANNELS'][str(guild.id)] = channel.id
-            save_config()
-            await interaction.response.send_message(f"Counter channel has been created! {channel.mention}")
-        else:
-            await interaction.response.send_message("Failed to create counter channel.")
-        
-    except discord.Forbidden:
-        await interaction.response.send_message("I don't have permission to create channels!")
+            # إنشاء القناة الصوتية
+            await interaction.response.defer()  # تأجيل الرد لأن إنشاء القناة قد يستغرق وقتاً
+            
+            channel = await guild.create_voice_channel(
+                name=config['CHANNEL_NAME'].format(count=guild.member_count),
+                overwrites=overwrites,
+                reason="Member counter channel"
+            )
+            
+            if channel and channel.id:
+                # تخزين معرف القناة
+                config['COUNTER_CHANNELS'][str(guild.id)] = channel.id
+                save_config()
+                await interaction.followup.send(f"Counter channel has been created! {channel.mention}")
+            else:
+                await interaction.followup.send("Failed to create counter channel. Please try again.")
+            
+        except discord.Forbidden:
+            await interaction.followup.send("I don't have permission to create channels! Please check my permissions.")
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred while creating the channel: {str(e)}")
+            
     except Exception as e:
-        await interaction.response.send_message(f"An error occurred: {str(e)}")
+        try:
+            await interaction.followup.send(f"An unexpected error occurred: {str(e)}")
+        except:
+            try:
+                await interaction.response.send_message(f"An unexpected error occurred: {str(e)}")
+            except:
+                print(f"Failed to send error message: {str(e)}")
 
 # تشغيل البوت
 if __name__ == "__main__":
