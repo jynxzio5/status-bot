@@ -12,10 +12,21 @@ def load_config():
     except:
         return {
             'DISCORD_TOKEN': os.getenv('DISCORD_TOKEN'),
-            'CHANNEL_NAME': os.getenv('CHANNEL_NAME', 'Members: {count}')
+            'CHANNEL_NAME': os.getenv('CHANNEL_NAME', 'Members: {count}'),
+            'COUNTER_CHANNELS': {}  # تخزين معرفات القنوات
         }
 
+def save_config():
+    try:
+        with open('config2.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"Error saving config: {str(e)}")
+
 config = load_config()
+if 'COUNTER_CHANNELS' not in config:
+    config['COUNTER_CHANNELS'] = {}
+    save_config()
 
 # Bot setup
 intents = discord.Intents.default()
@@ -42,32 +53,45 @@ async def on_ready():
 @bot.event
 async def on_member_join(member):
     """تحديث العداد عند انضمام عضو جديد"""
-    await update_member_count(member.guild)
+    if member and member.guild:
+        await update_member_count(member.guild)
 
 @bot.event
 async def on_member_remove(member):
     """تحديث العداد عند مغادرة عضو"""
-    await update_member_count(member.guild)
+    if member and member.guild:
+        await update_member_count(member.guild)
 
 async def update_member_count(guild, channel=None):
     """تحديث عدد الأعضاء في اسم القناة"""
-    # البحث عن القناة الموجودة
-    if not channel:
-        for ch in guild.channels:
-            if ch.name.startswith(config['CHANNEL_NAME'].format(count='').strip()):
-                channel = ch
-                break
-    
-    # تحديث القناة فقط إذا كانت موجودة
-    if channel:
-        try:
-            new_name = config['CHANNEL_NAME'].format(count=guild.member_count)
-            if channel.name != new_name:
-                await channel.edit(name=new_name)
-        except discord.Forbidden:
-            print(f"لا يمكن تعديل اسم القناة في {guild.name}")
-        except Exception as e:
-            print(f"خطأ في تحديث اسم القناة: {str(e)}")
+    if not guild:
+        return
+
+    try:
+        # البحث عن القناة الموجودة
+        if not channel:
+            # البحث عن معرف القناة المخزن
+            channel_id = config['COUNTER_CHANNELS'].get(str(guild.id))
+            if channel_id:
+                channel = guild.get_channel(int(channel_id))
+                if not channel:
+                    # إذا لم يتم العثور على القناة، نزيل معرفها من التخزين
+                    del config['COUNTER_CHANNELS'][str(guild.id)]
+                    save_config()
+                    return
+        
+        # تحديث القناة فقط إذا كانت موجودة
+        if channel and isinstance(channel, discord.VoiceChannel):
+            try:
+                new_name = config['CHANNEL_NAME'].format(count=guild.member_count)
+                if channel.name != new_name:
+                    await channel.edit(name=new_name)
+            except discord.Forbidden:
+                print(f"لا يمكن تعديل اسم القناة في {guild.name}")
+            except Exception as e:
+                print(f"خطأ في تحديث اسم القناة: {str(e)}")
+    except Exception as e:
+        print(f"خطأ في تحديث عدد الأعضاء: {str(e)}")
 
 @bot.tree.command(name="setup", description="Setup the member counter channel")
 @app_commands.checks.has_permissions(administrator=True)
@@ -78,12 +102,11 @@ async def setup(interaction: discord.Interaction):
             await interaction.response.send_message("This command can only be used in a server!")
             return
 
-        # البحث عن قناة موجودة
+        # البحث عن قناة موجودة باستخدام المعرف المخزن
         existing_channel = None
-        for channel in guild.channels:
-            if channel.name.startswith(config['CHANNEL_NAME'].format(count='').strip()):
-                existing_channel = channel
-                break
+        channel_id = config['COUNTER_CHANNELS'].get(str(guild.id))
+        if channel_id:
+            existing_channel = guild.get_channel(int(channel_id))
 
         if existing_channel:
             # تحديث القناة الموجودة
@@ -114,7 +137,13 @@ async def setup(interaction: discord.Interaction):
             reason="Member counter channel"
         )
         
-        await interaction.response.send_message(f"Counter channel has been created! {channel.mention}")
+        if channel:
+            # تخزين معرف القناة
+            config['COUNTER_CHANNELS'][str(guild.id)] = channel.id
+            save_config()
+            await interaction.response.send_message(f"Counter channel has been created! {channel.mention}")
+        else:
+            await interaction.response.send_message("Failed to create counter channel.")
         
     except discord.Forbidden:
         await interaction.response.send_message("I don't have permission to create channels!")
