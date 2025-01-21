@@ -153,6 +153,25 @@ async def setup(interaction: discord.Interaction):
         except:
             print(f"Failed to send error message: {str(e)}")
 
+@bot.tree.command(name="invite", description="Get the bot's invite link")
+async def invite(interaction: discord.Interaction):
+    """الحصول على رابط دعوة البوت"""
+    permissions = discord.Permissions(
+        manage_channels=True,
+        view_channel=True,
+        send_messages=True,
+        connect=True
+    )
+    invite_link = discord.utils.oauth_url(
+        bot.user.id,
+        permissions=permissions,
+        scopes=["bot", "applications.commands"]
+    )
+    await interaction.response.send_message(
+        f"Click the link below to add me to your server:\n{invite_link}",
+        ephemeral=True  # الرسالة ستظهر فقط للشخص الذي طلبها
+    )
+
 # تشغيل البوت
 if __name__ == "__main__":
     token = config.get('DISCORD_TOKEN')
