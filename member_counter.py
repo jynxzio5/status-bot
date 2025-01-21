@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import os
 import json
@@ -36,44 +36,38 @@ async def on_ready():
     print(f'Bot is ready! Logged in as {bot.user.name}')
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching,
-        name="member count"
+        name="Use /setup to create counter"
     ))
-    update_counter.start()
 
 @bot.event
 async def on_member_join(member):
+    """تحديث العداد عند انضمام عضو جديد"""
     await update_member_count(member.guild)
 
 @bot.event
 async def on_member_remove(member):
+    """تحديث العداد عند مغادرة عضو"""
     await update_member_count(member.guild)
 
-async def update_member_count(guild):
+async def update_member_count(guild, channel=None):
     """تحديث عدد الأعضاء في اسم القناة"""
-    try:
-        # البحث عن قناة العداد أو إنشاء واحدة جديدة
-        channel = discord.utils.get(guild.voice_channels, name=config['CHANNEL_NAME'].format(count=0).split('•')[0].strip())
-        if not channel:
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True)
-            }
-            # إنشاء قناة جديدة في الأعلى
-            channel = await guild.create_voice_channel(
-                name=config['CHANNEL_NAME'].format(count=guild.member_count),
-                position=0,
-                overwrites=overwrites
-            )
-        else:
-            # تحديث اسم القناة الموجودة
-            await channel.edit(name=config['CHANNEL_NAME'].format(count=guild.member_count))
-    except Exception as e:
-        print(f"Error updating member count: {e}")
-
-@tasks.loop(minutes=5)
-async def update_counter():
-    """تحديث العداد لكل السيرفرات"""
-    for guild in bot.guilds:
-        await update_member_count(guild)
+    # البحث عن القناة الموجودة
+    if not channel:
+        for ch in guild.channels:
+            if ch.name.startswith(config['CHANNEL_NAME'].format(count='').strip()):
+                channel = ch
+                break
+    
+    # تحديث القناة فقط إذا كانت موجودة
+    if channel:
+        try:
+            new_name = config['CHANNEL_NAME'].format(count=guild.member_count)
+            if channel.name != new_name:
+                await channel.edit(name=new_name)
+        except discord.Forbidden:
+            print(f"لا يمكن تعديل اسم القناة في {guild.name}")
+        except Exception as e:
+            print(f"خطأ في تحديث اسم القناة: {str(e)}")
 
 @bot.tree.command(name="setup", description="Setup the member counter channel")
 @app_commands.checks.has_permissions(administrator=True)
@@ -85,10 +79,17 @@ async def setup(interaction: discord.Interaction):
             return
 
         # البحث عن قناة موجودة
+        existing_channel = None
         for channel in guild.channels:
-            if channel.name.startswith(config['CHANNEL_NAME'].format(count='')):
-                await interaction.response.send_message("Counter channel already exists!")
-                return
+            if channel.name.startswith(config['CHANNEL_NAME'].format(count='').strip()):
+                existing_channel = channel
+                break
+
+        if existing_channel:
+            # تحديث القناة الموجودة
+            await update_member_count(guild, existing_channel)
+            await interaction.response.send_message(f"Updated existing counter channel: {existing_channel.mention}")
+            return
 
         # إنشاء أذونات القناة
         overwrites = {
@@ -114,7 +115,6 @@ async def setup(interaction: discord.Interaction):
         )
         
         await interaction.response.send_message(f"Counter channel has been created! {channel.mention}")
-        await update_member_count(guild)
         
     except discord.Forbidden:
         await interaction.response.send_message("I don't have permission to create channels!")
